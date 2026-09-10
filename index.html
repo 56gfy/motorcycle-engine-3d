@@ -243,13 +243,13 @@
 <div class="ui" id="title">
   <div class="kicker">EXPLODED&nbsp;ASSEMBLY&nbsp;·&nbsp;NO.07</div>
   <h1>V-TWIN<span class="cc">1103</span></h1>
-  <h2>双缸风冷摩托车发动机 · 交互式三维结构爆炸图</h2>
+  <h2>现代双缸液冷摩托车发动机 · 交互式三维结构爆炸图</h2>
   <div class="chips">
     <span class="chip"><b>90°</b> V 型双缸</span>
     <span class="chip"><b>1103</b> cc</span>
     <span class="chip">Ø<b>100</b>×70</span>
-    <span class="chip">OHV · 2 气门</span>
-    <span class="chip"><b>5</b> 速常啮合</span>
+    <span class="chip">DOHC · 8 气门</span>
+    <span class="chip">液冷 · <b>6</b> 速</span>
   </div>
 </div>
 
@@ -397,8 +397,10 @@ const clamp01 = x => Math.min(1, Math.max(0, x));
 const easeIO  = x => x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
 
 /* ---------- 曲柄连杆运动学（运转模拟） ----------
-   曲柄销绕世界 X 轴旋转 φ，基准 φ=0 时位于 (0, 0, pinOff)。
-   活塞沿缸轴 dir 往复：s(φ) = d·P + √(L² − r² + (d·P)²)  */
+   曲柄销绕世界 X 轴旋转 φ。PHI0 = π/2 为静态装配基准角：
+   此时曲柄销朝正下方，两缸活塞均位于冲程中位，
+   上止点也在缸套内，运转全程不外露。 */
+const PHI0 = Math.PI/2;
 function crankPin(phi){
   return { Py: -pinOff*Math.sin(phi), Pz: pinOff*Math.cos(phi) };
 }
@@ -407,10 +409,10 @@ function pistonS(dir, phi){
   const proj = dir.y*Py + dir.z*Pz;
   return proj + Math.sqrt(rodLen*rodLen - pinOff*pinOff + proj*proj);
 }
-// φ=0 时连杆姿态（静态装配即运动学一致，切换无跳变）
+// PHI0 时连杆姿态（静态装配即运动学一致，切换无跳变）
 function rodDir0(dir){
-  const s0 = pistonS(dir, 0);
-  const uy = dir.y*s0, uz = dir.z*s0 - pinOff;
+  const s0 = pistonS(dir, PHI0);
+  const uy = dir.y*s0 + pinOff, uz = dir.z*s0;
   const l = Math.hypot(uy, uz);
   return V(0, uy/l, uz/l);
 }
@@ -515,7 +517,7 @@ function reg(o){
     mesh(g, tor(.16,.045,16), M.black(), [0,-.12, s*1.9], [Math.PI/2,0,0]);
   }
   boltRing(g, 1.05, 6, .78, bm, 'Y', .05, .08); // 缸座螺栓
-  reg({ num:'01', name:'曲轴箱', en:'CRANKCASE', spec:'ADC12 铝合金压铸 · 左右分体式 · 内嵌 5 速变速鼓',
+  reg({ num:'01', name:'曲轴箱', en:'CRANKCASE', spec:'ADC12 铝合金高压压铸 · 内嵌 6 速变速鼓 · 集成水泵腔',
         group:g, anchor:V(0,-.42,1.72), delay:0, dist:0 });
 })();
 
@@ -534,18 +536,24 @@ function reg(o){
         group:g, anchor:V(0,-1.75,0), dir:V(0,-1,0), dist:1.05, delay:.30, shell:true });
 })();
 
-/* ---------- 03/04 气缸体（前/后） ---------- */
+/* ---------- 03/04 气缸体（前/后，液冷） ---------- */
 function buildJug(dir, suffix){
   const g = new THREE.Group();
   const alu = M.alu(), st = M.steel();
   const s = sub(g, dir.clone().multiplyScalar(1.1), dir);
-  const { pts } = finProfile(1.03, 1.55, .05, .19, 8);
+  const { pts } = finProfile(1.03, 1.35, .05, .15, 4);            // 液冷：少量辅助散热片
   mesh(s, new THREE.LatheGeometry(pts, 56), alu);
   mesh(s, cyl(1.18,1.18,.14,36), alu, [0,.06,0]);                   // 底法兰
   mesh(s, tor(1.07,.032,36), M.gasket(), [0,.16,0], [Math.PI/2,0,0]); // 缸垫
-  mesh(s, cyl(1.005,1.005,2.06,36,1,true), st, [0,1.0,0]);           // 缸套(开放)
+  mesh(s, cyl(1.005,1.005,2.16,36,1,true), st, [0,1.0,0]);           // 缸套(开放，覆盖全冲程)
   for (const x of [-1.02,1.02]) hexBolt(s, [x,.1,0], 'Y', .05,.4, boltMat()); // 双头螺柱
-  reg({ num:'03', name:'气缸体·'+suffix, en:'CYLINDER BLOCK', spec:'Ø100 铸铁缸套 · 8 片式散热鳍 · 行程 70mm',
+  // 液冷水室：进/出水接头 + 水道外壳
+  for (const [z,r] of [[.62,.14],[1.42,.11]]){
+    const w = mesh(s, cyl(r,r,.5,18), M.steel(), [0,.9,z]); w.rotation.x = Math.PI/2;
+    mesh(s, tor(r+.03,.03,18), M.steel(), [0,.9,z+.25], [0,Math.PI/2,0]);
+  }
+  mesh(s, cyl(1.08,1.08,1.9,48,1,true), M.aluD(), [0,1.0,0]);        // 水套外壳（半透明感深铝）
+  reg({ num:'03', name:'气缸体·'+suffix, en:'CYLINDER BLOCK', spec:'闭式液冷水套 · 陶瓷镀层薄壁缸套 · 行程 70mm',
         group:g, anchor:dir.clone().multiplyScalar(2.15), dir:dir.clone(), dist:1.35, delay:.20, shell:true });
 }
 buildJug(F,'前'); buildJug(R,'后');
@@ -555,7 +563,7 @@ const rodLen = 1.72, pinOff = .7;
 function buildPiston(sideX, dir, suffix){
   const g = new THREE.Group();
   const u0 = rodDir0(dir);
-  const pos = V(sideX, 0, pinOff).add(u0.clone().multiplyScalar(rodLen)); // 运动学 φ=0 位置
+  const pos = V(sideX, -pinOff, 0).add(u0.clone().multiplyScalar(rodLen)); // PHI0 运动学位置（冲程中位）
   const s = sub(g, pos, dir);
   const alu = M.alu();
   const pts = [new THREE.Vector2(0,.82), new THREE.Vector2(.94,.8), new THREE.Vector2(1.0,.7),
@@ -574,8 +582,8 @@ buildPiston(.12, F, '前'); buildPiston(-.12, R, '后');
 function buildRod(sideX, dir, suffix){
   const g = new THREE.Group();
   const u0 = rodDir0(dir);
-  const pos = V(sideX, 0, pinOff);
-  const s = sub(g, pos, u0); // 连杆沿 φ=0 运动学姿态
+  const pos = V(sideX, -pinOff, 0);                               // PHI0 曲柄销位置
+  const s = sub(g, pos, u0); // 连杆沿 PHI0 运动学姿态
   const st = M.steel(), sd = M.steelD();
   mesh(s, tor(.34,.115,26), st, [0,0,0], [Math.PI/2,0,0]);           // 大头
   mesh(s, tor(.17,.09,20),  st, [0,rodLen,0], [Math.PI/2,0,0]);       // 小头
@@ -625,12 +633,12 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
   mesh(s, cyl(.11,.11,3.0,16), st, [0,0,0]);
   const dr = sub(spin, V(0,-.78,-.8), V(1,0,0));
   mesh(dr, cyl(.08,.08,2.7,14), st, [0,0,0]);                       // 拨叉轴
-  const gr = [[-.9,.5],[-.3,.68],[.35,.62],[.95,.48]];
+  const gr = [[-.9,.5],[-.3,.68],[.35,.62],[.95,.48],[1.4,.42]];
   for (const [x,r] of gr){
     mesh(s, cyl(r,r,.17,26), sd, [0,x,0]);
     teeth(s, r, 14, .07, x, st);
   }
-  reg({ num:'08', name:'变速轴系', en:'GEARBOX', spec:'5 速常啮合 · 斜齿渐开线 · 主轴 + 拨叉轴布置',
+  reg({ num:'08', name:'变速轴系', en:'GEARBOX', spec:'6 速常啮合 · 斜齿渐开线 · 密齿比 · 主轴 + 拨叉轴布置',
         group:g, anchor:V(1.5,-.32,-1.15), dir:V(0,.4,-1).normalize(), dist:2.4, delay:.36,
         kin:{ type:'spin', spin, ratio:.6 } });
 })();
@@ -745,40 +753,59 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
         group:g, anchor:V(2.6,0,.9), dir:V(1,0,0), dist:4.6, delay:.33, shell:true });
 })();
 
-/* ---------- 15 气缸盖（前/后） ---------- */
+/* ---------- 15 气缸盖（前/后，DOHC） ---------- */
 function buildHead(dir, suffix, inner){
   const g = new THREE.Group();
   const alu = M.alu(), aluD = M.aluD(), bm = boltMat();
   const base = dir.clone().multiplyScalar(3.15);
   const s = sub(g, base, dir);
-  mesh(s, cyl(1.1,1.1,.42,36), aluD, [0,.21,0]);                       // 无鳍带(安装面)
-  const { pts } = finProfile(1.06, 1.48, .06, .23, 3);
-  mesh(s, new THREE.LatheGeometry(pts, 56).translate(0,.42,0), alu);  // 鳍段
+  mesh(s, cyl(1.1,1.1,.42,36), aluD, [0,.21,0]);                       // 安装面
+  mesh(s, cyl(1.22,1.22,.7,36), alu, [0,.6,0]);                        // DOHC 盖体（无鳍，液冷）
   mesh(s, cyl(1.28,1.28,.16,36), alu, [0,1.25,0]);                    // 顶面
   mesh(s, tor(1.13,.03,36), M.gasket(), [0,.06,0], [Math.PI/2,0,0]);
+  // DOHC 双凸轮轴（局部 X 向并排，凸轮凸角）
+  for (const x of [-.42,.42]){
+    const cs = sub(s, V(x,1.05,0), V(1,0,0));
+    mesh(cs, cyl(.13,.13,1.5,20), M.steel());
+    for (let i=0;i<4;i++){
+      const lobe = mesh(cs, cyl(.2,.13,.12,22), M.steel(), [0,-.5+i*.36,0]);
+    }
+  }
+  // 气门弹簧组（4 气门）
+  for (const [x,z] of [[-.42,-.55],[.42,-.55],[-.42,.55],[.42,.55]]){
+    const vs = sub(s, V(x,.85,z), dir);
+    mesh(vs, tor(.12,.028,16), M.steel(), [0,0,0], [Math.PI/2,0,0]);
+    mesh(vs, cyl(.035,.035,.3,10), M.steelD(), [0,.05,0]);
+  }
+  // 正时链导向轨（V 型内侧下行）
+  const chain = sub(g, base.clone().add(dir.clone().multiplyScalar(.5)).add(inner.clone().multiplyScalar(.6)), inner);
+  mesh(chain, box(.12,1.6,.06,.02), M.black(), [0,-.55,0]);
   // 进气歧管座（朝 V 型内侧）
   const inl = inner.clone().multiplyScalar(1.0);
   const stubI = sub(g, base.clone().add(dir.clone().multiplyScalar(.45)).add(inl), inner);
   mesh(stubI, cyl(.26,.26,.7,20), alu);
   mesh(stubI, tor(.28,.03,20), M.black(), [0,.34,0], [Math.PI/2,0,0]);
-  reg({ num:'15', name:'气缸盖·'+suffix, en:'CYLINDER HEAD', spec:'YO327 铝合金 · 楔形燃烧室 · 进排气门夹角 38°',
+  reg({ num:'15', name:'气缸盖·'+suffix, en:'CYLINDER HEAD DOHC', spec:'四气门中央点火 · 双顶置凸轮 · 滚子摇臂 · 液冷盖体',
         group:g, anchor:base.clone().add(inner.clone().multiplyScalar(1.55)),
         dir:dir.clone(), dist:2.6, delay:.08, shell:true });
 }
 buildHead(F, '前', R);
 buildHead(R, '后', F);
 
-/* ---------- 16 摇臂室盖（前/后） ---------- */
+/* ---------- 16 凸轮轴盖（前/后） ---------- */
 function buildRocker(dir, suffix){
   const g = new THREE.Group();
   const s = sub(g, dir.clone().multiplyScalar(4.45), dir);
   const wnk = M.wrinkle(), alu = M.alu();
+  // DOHC 双驼峰凸轮轴盖造型
   mesh(s, box(2.5,.14,1.75,.05), alu, [0,.07,0]);
-  mesh(s, box(2.3,.5,1.55,.12), wnk, [0,.38,0]);
-  mesh(s, box(1.9,.3,1.2,.1), wnk, [0,.76,0]);
-  for (const z of [-.34,0,.34]) mesh(s, new THREE.BoxGeometry(2.02,.06,.16), alu, [0,.94,z]);
+  for (const x of [-.42,.42]){
+    mesh(s, new THREE.CylinderGeometry(.42,.5,.62,28,1,false,.3,Math.PI*2-.6), wnk, [x,.4,0], [0,0,Math.PI/2]);
+  }
+  mesh(s, box(2.28,.24,1.5,.1), wnk, [0,.52,0]);
+  for (const x of [-.42,.42]) hexBolt(s, [x,.86,0], 'Y', .05,.1, boltMat());
   for (const [x,z] of [[-1.08,-.7],[1.08,-.7],[-1.08,.7],[1.08,.7]]) hexBolt(s, [x,.12,z], 'Y', .05,.1, boltMat());
-  reg({ num:'16', name:'摇臂室盖·'+suffix, en:'ROCKER COVER', spec:'锻铝 · 耐高温皱漆 · 气门间隙调整检视孔',
+  reg({ num:'16', name:'凸轮轴盖·'+suffix, en:'CAM COVER', spec:'DOHC 凸轮轴室 · 镁合金 · 集成凸轮轴位置传感器',
         group:g, anchor:dir.clone().multiplyScalar(4.95),
         dir:dir.clone(), dist:3.4, delay:0, shell:true });
 }
@@ -797,30 +824,38 @@ function buildPlug(dir, outer, suffix){
   mesh(s, cyl(.055,.055,.24,14), M.ceramic(), [0,.5,0]);        // 绝缘体
   for (const y of [.44,.55]) mesh(s, tor(.058,.014,14), M.ceramic(), [0,y,0], [Math.PI/2,0,0]);
   mesh(s, cyl(.04,.04,.14,12), termMat, [0,.68,0]);             // 端子
-  reg({ num:'17', name:'火花塞·'+suffix, en:'SPARK PLUG', spec:'M12 × 1.25 · 热值 8 · 镍铬中心电极',
+  reg({ num:'17', name:'火花塞·'+suffix, en:'SPARK PLUG', spec:'M12 × 1.25 · 铱金中心电极 · 中央垂直点火',
         group:g, anchor:pos.clone().add(ax.clone().multiplyScalar(.6)),
         dir:ax.clone(), dist:2.8, delay:.12,
         kin:{ type:'plug', mat:termMat, phase: suffix === '前' ? 0 : 1.5*Math.PI } });
 }
 buildPlug(F, R.clone().negate(), '前'); buildPlug(R, F.clone().negate(), '后');
 
-/* ---------- 18 化油器（前/后，含歧管） ---------- */
+/* ---------- 18 电子节气门体（前/后，EFI） ---------- */
 function buildCarb(dir, inner, suffix){
   const g = new THREE.Group();
   const pos = dir.clone().multiplyScalar(3.5).add(inner.clone().multiplyScalar(1.75));
-  const s = sub(g, pos, inner);                                  // 喉管朝 -inner
-  s.scale.setScalar(1.18);                                       // 放大化油器，收紧歧管衔接
-  const alu = M.alu(), br = M.brass(), chr = M.chrome();
+  const s = sub(g, pos, inner);                                  // 节气门朝 -inner
+  s.scale.setScalar(1.18);
+  const alu = M.alu(), br = M.brass(), chr = M.chrome(), bk = M.black();
   mesh(s, cyl(.22,.22,.85,20), alu, [0,-.42,0]);                // 进气歧管
-  mesh(s, box(.6,.44,.6,.08), alu, [0,.06,0]);                  // 本体
-  mesh(s, box(.52,.32,.52,.07), br, [0,-.32,0]);                // 浮子室
+  mesh(s, box(.6,.44,.6,.08), alu, [0,.06,0]);                  // 节气门本体
   mesh(s, cyl(.46,.35,.3,26,1,true), chr, [0,.38,0]);           // 进气喇叭口
-  mesh(s, cyl(.3,.3,.34,22), M.inner(), [0,.38,0]);
-  hexBolt(s, [.31,.06,0], 'X', .04,.08, boltMat());             // 怠速螺钉
+  mesh(s, cyl(.3,.3,.34,22), M.inner(), [0,.38,0]);             // 蝶形阀
+  const bf = mesh(s, cyl(.28,.28,.04,22), chr, [0,.34,0]); bf.rotation.x = Math.PI/2*.55; // 阀片
+  // 喷油嘴（上置双孔）+ 燃油轨接口
+  for (const x of [-.16,.16]){
+    mesh(s, cyl(.05,.05,.22,12), bk, [x,.3,.2], [0,0,Math.PI/2*.3]);
+    mesh(s, cyl(.03,.03,.1,10), br, [x,.42,.24]);
+  }
+  mesh(s, box(.5,.09,.12,.02), alu, [0,.5,.16]);                // 燃油轨
+  // 电子接口：TPS/步进电机插头 + 线束
+  mesh(s, box(.16,.12,.2,.03), bk, [.32,-.05,.1]);
+  mesh(s, cyl(.025,.025,.3,8), bk, [.42,-.1,.14], [0,0,.4]);
+  mesh(s, box(.14,.1,.18,.03), bk, [-.3,-.12,.08]);
+  hexBolt(s, [.31,.06,0], 'X', .04,.08, boltMat());             // 节气门限位螺钉
   hexBolt(s, [-.31,-.05,0], 'X', .04,.08, boltMat());
-  mesh(s, cyl(.035,.035,.16,10), br, [.18,.3,.28]);             // 油管接头
-  mesh(s, cyl(.03,.03,.2,10), M.black(), [-.1,.32,-.28]);
-  reg({ num:'18', name:'化油器·'+suffix, en:'CARBURETOR', spec:'CVK36 等真空膜片式 ×2 · 主量孔 #132',
+  reg({ num:'18', name:'节气门体·'+suffix, en:'ETB / EFI', spec:'电子节气门 Ø44 · 双孔喷油嘴 · TPS + 怠速步进电机',
         group:g, anchor:pos.clone().add(V(0,.5,0)),
         dir:V(0,1,inner.z*.5).normalize(), dist:1.7, delay:.14 });
 }
@@ -846,7 +881,11 @@ function tube(points, r, mat, g, flare=true){
   tube([V(0,1.66,3.02), V(0,1.4,4.15), V(0,.5,4.75), V(0,-.7,4.5)], .33, ex, g);
   mesh(g, tor(.4,.06,24), M.steelD(), [0,1.66,3.02]);            // 排气口法兰
   mesh(g, cyl(.09,.09,.1,6), M.steelD(), [0,1.66,3.02], [Math.PI/2,0,0]);
-  reg({ num:'19', name:'排气歧管·前', en:'EXHAUST HEADER', spec:'Ø42 不锈钢等长头段 · 双回压腔接口',
+  const o2 = sub(g, V(0,1.15,3.7), V(0,1,0).normalize());        // 前段 O2 传感器
+  mesh(o2, cyl(.07,.07,.12,6), M.steelD());
+  mesh(o2, cyl(.05,.05,.1,10), M.black(), [0,.1,0]);
+  mesh(o2, box(.05,.16,.09,.02), M.black(), [0,.2,0]);
+  reg({ num:'19', name:'排气歧管·前', en:'EXHAUST HEADER', spec:'Ø42 不锈钢等长头段 · 集成前段 O2 传感器',
         group:g, anchor:V(0,.9,4.4), dir:V(0,-.55,.84).normalize(), dist:2.2, delay:.18 });
 })();
 (function(){
@@ -934,17 +973,18 @@ slider.addEventListener('input', () => { state.anim = null; setT(slider.value/10
 const RUN = { on:true, phi:0, speed:1.6 };
 const _qd = new THREE.Quaternion(), _u = new THREE.Vector3();
 function runUpdate(dt){
-  const active = RUN.on && state.t < .12;
+  const active = RUN.on && state.t < .02;   // 仅完全组装态运转，避免爆炸位移叠加冲程穿出缸筒
   if (active) RUN.phi += RUN.speed * dt;
   const phi = RUN.phi;
   const { Py, Pz } = crankPin(phi);
+  const P0y = -pinOff, P0z = 0;             // PHI0 曲柄销位置
   for (const p of PARTS){
     const k = p.kin; if (!k) continue;
     const e = p._e || 0;
     if (k.type === 'crank' || k.type === 'spin'){
       k.spin.rotation.y = phi * (k.ratio !== undefined ? k.ratio : 1);
     } else if (k.type === 'piston'){
-      const ds = active ? pistonS(k.dir, phi) - pistonS(k.dir, 0) : 0;
+      const ds = active ? pistonS(k.dir, phi) - pistonS(k.dir, PHI0) : 0;
       p.group.position.copy(k.dir).multiplyScalar(p.dist*e + ds);
     } else if (k.type === 'rod'){
       if (active){
@@ -952,7 +992,7 @@ function runUpdate(dt){
         _u.set(0, k.dir.y*s - Py, k.dir.z*s - Pz).normalize();
         _qd.setFromUnitVectors(k.u0, _u);
         p.group.quaternion.copy(_qd);
-        p.group.position.set(0, Py, Pz - pinOff).addScaledVector(k.dir, p.dist*e);
+        p.group.position.set(0, Py - P0y, Pz - P0z).addScaledVector(k.dir, p.dist*e);
       } else {
         p.group.quaternion.identity();
         p.group.position.copy(k.dir).multiplyScalar(p.dist*e);
