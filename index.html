@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>V-TWIN 1103 · 摩托车发动机三维爆炸图</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -202,12 +202,33 @@
   #err p{color:var(--dim);font-size:13px;line-height:1.9}
 
   @media (max-width:980px){
-    #title h1{font-size:26px}
-    #bom{display:none}#bomTab{display:none}
-    #hint{display:none}
-    #console{gap:10px;padding:10px 12px;bottom:18px}
-    #slider{width:34vw}
-    #toggles{top:auto;bottom:86px;right:14px;flex-direction:column}
+    #title{top:14px;left:16px;max-width:60vw}
+    #title .kicker{font-size:9px;letter-spacing:.28em;margin-bottom:6px}
+    #title h1{font-size:24px}
+    #title h2{font-size:10px;margin-top:5px;letter-spacing:.06em}
+    .chips{gap:4px;margin-top:8px;max-width:60vw}
+    .chip{font-size:9px;padding:3px 6px;letter-spacing:.03em}
+    .chip:nth-child(n+4){display:none}
+    #toggles{top:14px;right:14px;flex-direction:column;gap:6px}
+    .tgl{font-size:10.5px;padding:7px 10px;letter-spacing:.1em}
+    #bom,#bomTab,#hint,#credit{display:none}
+    #console{
+      left:10px;right:10px;transform:none;gap:8px;padding:10px 12px;
+      bottom:max(14px, env(safe-area-inset-bottom));
+      flex-wrap:wrap;justify-content:center;
+    }
+    #console .lab{font-size:9.5px}
+    #console .lab b{font-size:10.5px}
+    #slider{flex:1 1 100%;order:-1;min-width:150px;width:100%}
+    #pct{font-size:15px;min-width:52px}
+    #play{padding:8px 12px;font-size:10.5px}
+    #tip{min-width:150px;max-width:70vw}
+    .co{font-size:8.5px;padding:2px 5px;letter-spacing:0}
+  }
+  @media (max-width:420px){
+    #title h1{font-size:21px}
+    .chips{display:none}
+    .corner{width:16px;height:16px}
   }
 </style>
 </head>
@@ -237,6 +258,7 @@
   <button class="tgl" id="tLabels"><span class="dot"></span>标注</button>
   <button class="tgl" id="tXray"><span class="dot"></span>X 光</button>
   <button class="tgl" id="tSpin"><span class="dot"></span>旋转</button>
+  <button class="tgl on" id="tRun"><span class="dot"></span>运转</button>
 </div>
 
 <!-- 部件清单 -->
@@ -260,7 +282,7 @@
 
 <div class="ui" id="hint">
   <b>左键拖拽</b> 旋转视角 &nbsp;·&nbsp; <b>滚轮</b> 缩放 &nbsp;·&nbsp; <b>右键</b> 平移<br>
-  <b>悬停部件</b> 查看名称 &nbsp;·&nbsp; <b>空格键</b> 分解 ⇄ 组装 &nbsp;·&nbsp; <b>X 键</b> X 光
+  <b>悬停部件</b> 查看名称 &nbsp;·&nbsp; <b>空格键</b> 分解 ⇄ 组装 &nbsp;·&nbsp; <b>X 键</b> X 光 &nbsp;·&nbsp; <b>R 键</b> 运转
 </div>
 <div class="ui" id="credit">REAL-TIME WEBGL · 27 COMPONENTS<br>RENDERED 100% LOCALLY</div>
 
@@ -304,6 +326,12 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.06;
 stage.appendChild(renderer.domElement);
 
+// 移动端性能优化：降分辨率与阴影尺寸
+const IS_MOBILE = matchMedia('(pointer:coarse)').matches || innerWidth < 980;
+if (IS_MOBILE){
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
+}
+
 const scene  = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(38, innerWidth/innerHeight, .1, 200);
 camera.position.set(15, 8.5, 16.5); // 开场远景，稍后飞入
@@ -324,7 +352,7 @@ scene.environment = pmrem.fromScene(new RoomEnvironment(), .04).texture;
 const key = new THREE.DirectionalLight(0xfff2e0, 2.6);
 key.position.set(6, 10, 5.5);
 key.castShadow = true;
-key.shadow.mapSize.set(2048, 2048);
+key.shadow.mapSize.set(IS_MOBILE ? 1024 : 2048, IS_MOBILE ? 1024 : 2048);
 Object.assign(key.shadow.camera, { left:-9, right:9, top:9, bottom:-9, near:.5, far:32 });
 key.shadow.bias = -.0004; key.shadow.normalBias = .02;
 scene.add(key);
@@ -367,6 +395,25 @@ const R   = V(0, SQ, -SQ);   // 后缸轴线（向上-后）
 const MAXD = .36;
 const clamp01 = x => Math.min(1, Math.max(0, x));
 const easeIO  = x => x < .5 ? 4*x*x*x : 1 - Math.pow(-2*x+2, 3)/2;
+
+/* ---------- 曲柄连杆运动学（运转模拟） ----------
+   曲柄销绕世界 X 轴旋转 φ，基准 φ=0 时位于 (0, 0, pinOff)。
+   活塞沿缸轴 dir 往复：s(φ) = d·P + √(L² − r² + (d·P)²)  */
+function crankPin(phi){
+  return { Py: -pinOff*Math.sin(phi), Pz: pinOff*Math.cos(phi) };
+}
+function pistonS(dir, phi){
+  const { Py, Pz } = crankPin(phi);
+  const proj = dir.y*Py + dir.z*Pz;
+  return proj + Math.sqrt(rodLen*rodLen - pinOff*pinOff + proj*proj);
+}
+// φ=0 时连杆姿态（静态装配即运动学一致，切换无跳变）
+function rodDir0(dir){
+  const s0 = pistonS(dir, 0);
+  const uy = dir.y*s0, uz = dir.z*s0 - pinOff;
+  const l = Math.hypot(uy, uz);
+  return V(0, uy/l, uz/l);
+}
 
 function qAlign(dir){ const q = new THREE.Quaternion(); q.setFromUnitVectors(Y, dir.clone().normalize()); return q; }
 // 生成一个"局部Y轴=dir"的子组，挂在 parent 上
@@ -505,12 +552,10 @@ buildJug(F,'前'); buildJug(R,'后');
 
 /* ---------- 05 活塞（前/后） ---------- */
 const rodLen = 1.72, pinOff = .7;
-function pistonPos(sideX, dir){
-  return V(sideX, 0, pinOff).add(dir.clone().multiplyScalar(rodLen));
-}
 function buildPiston(sideX, dir, suffix){
   const g = new THREE.Group();
-  const pos = pistonPos(sideX, dir);
+  const u0 = rodDir0(dir);
+  const pos = V(sideX, 0, pinOff).add(u0.clone().multiplyScalar(rodLen)); // 运动学 φ=0 位置
   const s = sub(g, pos, dir);
   const alu = M.alu();
   const pts = [new THREE.Vector2(0,.82), new THREE.Vector2(.94,.8), new THREE.Vector2(1.0,.7),
@@ -520,15 +565,17 @@ function buildPiston(sideX, dir, suffix){
   mesh(s, tor(.86,.02,32), M.black(), [0,.3,0], [Math.PI/2,0,0]);                            // 油环
   const pin = mesh(s, cyl(.16,.16,1.24,16), M.steel(), [0,.1,0]); pin.rotation.z = Math.PI/2; // 活塞销
   reg({ num:'05', name:'活塞·'+suffix, en:'PISTON', spec:'Ø100 平顶铸铝 · 2 气环 + 1 油环 · 浮式活塞销',
-        group:g, anchor:pos.clone().add(dir.clone().multiplyScalar(.55)), dir:dir.clone(), dist:2.9, delay:.28 });
+        group:g, anchor:pos.clone().add(dir.clone().multiplyScalar(.55)), dir:dir.clone(), dist:2.9, delay:.28,
+        kin:{ type:'piston', dir:dir.clone() } });
 }
 buildPiston(.12, F, '前'); buildPiston(-.12, R, '后');
 
 /* ---------- 06 连杆（前/后） ---------- */
 function buildRod(sideX, dir, suffix){
   const g = new THREE.Group();
+  const u0 = rodDir0(dir);
   const pos = V(sideX, 0, pinOff);
-  const s = sub(g, pos, dir);
+  const s = sub(g, pos, u0); // 连杆沿 φ=0 运动学姿态
   const st = M.steel(), sd = M.steelD();
   mesh(s, tor(.34,.115,26), st, [0,0,0], [Math.PI/2,0,0]);           // 大头
   mesh(s, tor(.17,.09,20),  st, [0,rodLen,0], [Math.PI/2,0,0]);       // 小头
@@ -538,14 +585,16 @@ function buildRod(sideX, dir, suffix){
   for (const x of [-.26,.26]) hexBolt(s, [x,-.06,0], 'Y', .05,.14, sd);
   reg({ num:'06', name:'连杆·'+suffix, en:'CONNECTING ROD', spec:'20CrMo 锻造 · I 形梁身 · 大头瓦 / 小头衬套',
         group:g, anchor:pos.clone().add(dir.clone().multiplyScalar(rodLen*.55)),
-        dir:dir.clone(), dist:.5, delay:.24 });
+        dir:dir.clone(), dist:.5, delay:.24,
+        kin:{ type:'rod', dir:dir.clone(), u0 } });
 }
 buildRod(.12, F, '前'); buildRod(-.12, R, '后');
 
 /* ---------- 07 曲轴 ---------- */
 (function(){
   const g = new THREE.Group();
-  const s = sub(g, V(0,0,0), V(1,0,0)); // 局部Y = 曲轴轴向(世界X)
+  const spin = new THREE.Group(); g.add(spin);                          // 运转旋转层
+  const s = sub(spin, V(0,0,0), V(1,0,0)); // 局部Y = 曲轴轴向(世界X)
   const st = M.steel(), sd = M.steelD();
   mesh(s, cyl(.17,.17,3.7,20), st, [0,0,0]);                          // 主轴
   const shp = new THREE.Shape();
@@ -563,16 +612,18 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
   mesh(s, cyl(.52,.52,.16,24), sd, [0,1.35,0]); teeth(s,.53,20,.09,1.35, st); // 一次传动齿轮
   mesh(s, cyl(.42,.42,.12,22), sd, [0,-1.35,0]); teeth(s,.43,16,.08,-1.35, st); // 链轮
   reg({ num:'07', name:'曲轴', en:'CRANKSHAFT', spec:'组合式曲轴 · 双侧平衡配重 · 主轴颈 Ø34 · 表面渗氮',
-        group:g, anchor:V(0,.2,.85), dir:V(0,-.5,-.75).normalize(), dist:2.0, delay:.34 });
+        group:g, anchor:V(0,.2,.85), dir:V(0,-.5,-.75).normalize(), dist:2.0, delay:.34,
+        kin:{ type:'crank', spin } });
 })();
 
 /* ---------- 08 变速轴系 ---------- */
 (function(){
   const g = new THREE.Group();
+  const spin = new THREE.Group(); g.add(spin);
   const st = M.steel(), sd = M.steelD();
-  const s = sub(g, V(0,-.32,-1.15), V(1,0,0)); // 局部Y = 轴向(世界X)
+  const s = sub(spin, V(0,-.32,-1.15), V(1,0,0)); // 局部Y = 轴向(世界X)
   mesh(s, cyl(.11,.11,3.0,16), st, [0,0,0]);
-  const dr = sub(g, V(0,-.78,-.8), V(1,0,0));
+  const dr = sub(spin, V(0,-.78,-.8), V(1,0,0));
   mesh(dr, cyl(.08,.08,2.7,14), st, [0,0,0]);                       // 拨叉轴
   const gr = [[-.9,.5],[-.3,.68],[.35,.62],[.95,.48]];
   for (const [x,r] of gr){
@@ -580,13 +631,15 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
     teeth(s, r, 14, .07, x, st);
   }
   reg({ num:'08', name:'变速轴系', en:'GEARBOX', spec:'5 速常啮合 · 斜齿渐开线 · 主轴 + 拨叉轴布置',
-        group:g, anchor:V(1.5,-.32,-1.15), dir:V(0,.4,-1).normalize(), dist:2.4, delay:.36 });
+        group:g, anchor:V(1.5,-.32,-1.15), dir:V(0,.4,-1).normalize(), dist:2.4, delay:.36,
+        kin:{ type:'spin', spin, ratio:.6 } });
 })();
 
 /* ---------- 09 磁电机转子 ---------- */
 (function(){
   const g = new THREE.Group();
-  const s = sub(g, V(-1.82,0,0), V(1,0,0));
+  const spin = new THREE.Group(); g.add(spin);
+  const s = sub(spin, V(-1.82,0,0), V(1,0,0));
   const st = M.steel(), al = M.alu();
   mesh(s, cyl(.92,.92,.26,36), st);
   mesh(s, tor(.62,.09,32), al, [0,.14,0], [Math.PI/2,0,0]);            // 涡流环
@@ -595,7 +648,8 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
   hexBolt(s, [0,.42,0], 'Y', .1,.12, M.black());
   boltRing(s, .45, 6, .16, boltMat());
   reg({ num:'09', name:'磁电机转子', en:'FLYWHEEL ROTOR', spec:'外转子式 · 12 磁极 · 兼作飞轮 · 无触点 CDI 触发',
-        group:g, anchor:V(-1.82,.0,1.0), dir:V(-1,0,0), dist:2.0, delay:.26 });
+        group:g, anchor:V(-1.82,.0,1.0), dir:V(-1,0,0), dist:2.0, delay:.26,
+        kin:{ type:'spin', spin, ratio:1 } });
 })();
 
 /* ---------- 10 磁电机盖 ---------- */
@@ -618,7 +672,8 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
 /* ---------- 11 离合器大鼓 ---------- */
 (function(){
   const g = new THREE.Group();
-  const s = sub(g, V(1.56,0,0), V(1,0,0));
+  const spin = new THREE.Group(); g.add(spin);
+  const s = sub(spin, V(1.56,0,0), V(1,0,0));
   const al = M.alu(), sd = M.steelD();
   mesh(s, cyl(.95,.95,.52,36), al);
   mesh(s, cyl(.86,.86,.1,32), sd, [0,-.3,0]);
@@ -629,13 +684,15 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
   }
   hexBolt(s, [0,.3,0], 'Y', .12,.14, boltMat());
   reg({ num:'11', name:'离合器大鼓', en:'CLUTCH BASKET', spec:'7075 锻铝 · 44 齿摩擦片槽 · 一级减速 1.84',
-        group:g, anchor:V(1.56,0,1.0), dir:V(1,0,0), dist:1.8, delay:.24, shell:true });
+        group:g, anchor:V(1.56,0,1.0), dir:V(1,0,0), dist:1.8, delay:.24, shell:true,
+        kin:{ type:'spin', spin, ratio:-1/1.84 } });
 })();
 
 /* ---------- 12 离合器片组 ---------- */
 (function(){
   const g = new THREE.Group();
-  const s = sub(g, V(1.5,0,0), V(1,0,0));
+  const spin = new THREE.Group(); g.add(spin);
+  const s = sub(spin, V(1.5,0,0), V(1,0,0));
   const plates = [];
   for (let i=0;i<7;i++){
     const fric = i % 2 === 0;
@@ -648,13 +705,15 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
   }
   reg({ num:'12', name:'离合器片组', en:'CLUTCH PLATES', spec:'7 片交替 · 摩擦片/钢片 · 石棉基复合材料',
         group:g, anchor:V(2.0,0,.7), dir:V(1,0,0), dist:3.0, delay:.27, shell:false,
+        kin:{ type:'spin', spin, ratio:-1/1.84 },
         extra(e){ for (const p of plates) p.m.position.y = p.y0 + e * .17; } });
 })();
 
 /* ---------- 13 离合器压板 ---------- */
 (function(){
   const g = new THREE.Group();
-  const s = sub(g, V(1.78,0,0), V(1,0,0));
+  const spin = new THREE.Group(); g.add(spin);
+  const s = sub(spin, V(1.78,0,0), V(1,0,0));
   const al = M.alu();
   mesh(s, cyl(.88,.88,.16,36), al, [0,-.1,0]);
   mesh(s, cyl(.3,.3,.3,20), al, [0,.12,0]);
@@ -665,7 +724,8 @@ buildRod(.12, F, '前'); buildRod(-.12, R, '后');
     mesh(s, tor(.07,.02,10), M.black(), [Math.cos(a)*.58, .3, Math.sin(a)*.58], [Math.PI/2,0,0]);
   }
   reg({ num:'13', name:'离合器压板', en:'PRESSURE PLATE', spec:'四弹簧膜式压紧 · 提升杆中心调节',
-        group:g, anchor:V(1.78,.3,.9), dir:V(1,0,0), dist:4.2, delay:.30 });
+        group:g, anchor:V(1.78,.3,.9), dir:V(1,0,0), dist:4.2, delay:.30,
+        kin:{ type:'spin', spin, ratio:-1/1.84 } });
 })();
 
 /* ---------- 14 离合器盖 ---------- */
@@ -730,15 +790,17 @@ function buildPlug(dir, outer, suffix){
   const pos = dir.clone().multiplyScalar(3.55).add(outer.clone().multiplyScalar(1.05));
   const ax  = outer.clone().add(V(0,-.3,0)).normalize();
   const s = sub(g, pos, ax);
+  const termMat = M.brass();                                      // 端子材质（点火闪烁）
   mesh(s, cyl(.1,.1,.05,18), M.steel(), [0,.1,0]);              // 接地极
   mesh(s, cyl(.09,.09,.18,18), M.steel(), [0,.2,0]);            // 螺纹段
   mesh(s, cyl(.085,.085,.07,6), M.steelD(), [0,.32,0]);        // 六角
   mesh(s, cyl(.055,.055,.24,14), M.ceramic(), [0,.5,0]);        // 绝缘体
   for (const y of [.44,.55]) mesh(s, tor(.058,.014,14), M.ceramic(), [0,y,0], [Math.PI/2,0,0]);
-  mesh(s, cyl(.04,.04,.14,12), M.brass(), [0,.68,0]);          // 端子
+  mesh(s, cyl(.04,.04,.14,12), termMat, [0,.68,0]);             // 端子
   reg({ num:'17', name:'火花塞·'+suffix, en:'SPARK PLUG', spec:'M12 × 1.25 · 热值 8 · 镍铬中心电极',
         group:g, anchor:pos.clone().add(ax.clone().multiplyScalar(.6)),
-        dir:ax.clone(), dist:2.8, delay:.12 });
+        dir:ax.clone(), dist:2.8, delay:.12,
+        kin:{ type:'plug', mat:termMat, phase: suffix === '前' ? 0 : 1.5*Math.PI } });
 }
 buildPlug(F, R.clone().negate(), '前'); buildPlug(R, F.clone().negate(), '后');
 
@@ -852,6 +914,7 @@ function setT(t, fromUI){
   for (const p of PARTS){
     const k = clamp01(t*(1+MAXD) - p.delay);
     const e = easeIO(k);
+    p._e = e;
     p.group.position.copy(p.dir).multiplyScalar(p.dist*e);
     if (p.extra) p.extra(e);
   }
@@ -863,12 +926,58 @@ function animateTo(target, dur=2800){
 }
 slider.addEventListener('input', () => { state.anim = null; setT(slider.value/1000, true); });
 
+/* ============================================================
+   运转模拟：组装态下曲轴持续旋转，活塞往复做功，
+   连杆按曲柄连杆运动学摆动，从动件按传动比旋转，
+   火花塞按四冲程相位点火闪烁
+============================================================ */
+const RUN = { on:true, phi:0, speed:1.6 };
+const _qd = new THREE.Quaternion(), _u = new THREE.Vector3();
+function runUpdate(dt){
+  const active = RUN.on && state.t < .12;
+  if (active) RUN.phi += RUN.speed * dt;
+  const phi = RUN.phi;
+  const { Py, Pz } = crankPin(phi);
+  for (const p of PARTS){
+    const k = p.kin; if (!k) continue;
+    const e = p._e || 0;
+    if (k.type === 'crank' || k.type === 'spin'){
+      k.spin.rotation.y = phi * (k.ratio !== undefined ? k.ratio : 1);
+    } else if (k.type === 'piston'){
+      const ds = active ? pistonS(k.dir, phi) - pistonS(k.dir, 0) : 0;
+      p.group.position.copy(k.dir).multiplyScalar(p.dist*e + ds);
+    } else if (k.type === 'rod'){
+      if (active){
+        const s = pistonS(k.dir, phi);
+        _u.set(0, k.dir.y*s - Py, k.dir.z*s - Pz).normalize();
+        _qd.setFromUnitVectors(k.u0, _u);
+        p.group.quaternion.copy(_qd);
+        p.group.position.set(0, Py, Pz - pinOff).addScaledVector(k.dir, p.dist*e);
+      } else {
+        p.group.quaternion.identity();
+        p.group.position.copy(k.dir).multiplyScalar(p.dist*e);
+      }
+    } else if (k.type === 'plug'){
+      if (active){
+        const cyc = ((phi - k.phase) % (4*Math.PI) + 4*Math.PI) % (4*Math.PI);
+        const f = cyc < .5 ? 1 - cyc/.5 : 0;
+        k.mat.emissive.setHex(0xbfe4ff);
+        k.mat.emissiveIntensity = f * 2.6;
+      } else if (k.mat.emissiveIntensity !== 0){
+        k.mat.emissive.setHex(0x000000);
+        k.mat.emissiveIntensity = 0;
+      }
+    }
+  }
+}
+
 const playBtn = document.getElementById('play'), playTxt = document.getElementById('playTxt');
 playBtn.addEventListener('click', () => animateTo(state.t < .5 ? 1 : 0, 3000));
 addEventListener('keydown', e => {
   if (e.code === 'Space'){ e.preventDefault(); animateTo(state.t < .5 ? 1 : 0, 3000); }
   if (e.code === 'KeyX') toggleXray();
   if (e.code === 'KeyL') toggleLabels();
+  if (e.code === 'KeyR') toggleRun();
 });
 
 /* ============================================================
@@ -892,6 +1001,8 @@ addEventListener('pointermove', e => {
   mouseXY = { x:e.clientX, y:e.clientY };
   ptr.x = (e.clientX/innerWidth)*2-1; ptr.y = -(e.clientY/innerHeight)*2+1;
 });
+// 触摸设备：点按查看提示后 2.6s 自动收起
+addEventListener('touchend', () => setTimeout(() => ptr.set(-9,-9), 2600));
 function updateHover(){
   ray.setFromCamera(ptr, camera);
   const hit = ray.intersectObjects(meshes, false)[0];
@@ -1025,13 +1136,24 @@ function toggleLabels(force){
 }
 document.getElementById('tXray').addEventListener('click', () => toggleXray());
 document.getElementById('tLabels').addEventListener('click', () => toggleLabels());
+function toggleRun(force){
+  RUN.on = force !== undefined ? force : !RUN.on;
+  document.getElementById('tRun').classList.toggle('on', RUN.on);
+}
+document.getElementById('tRun').addEventListener('click', () => toggleRun());
 document.getElementById('tSpin').addEventListener('click', function(){
   controls.autoRotate = !controls.autoRotate;
   this.classList.toggle('on', controls.autoRotate);
 });
 // 诊断接口（调试用）
-window.__diag = () => ({ xray:state.xray, nShellMats:shellMats.size,
+window.__diag = () => ({ xray:state.xray, run:RUN.on, phi:RUN.phi.toFixed(2),
+  nShellMats:shellMats.size,
   sampleOpacity:[...shellMats.keys()].slice(0,4).map(m=>m.opacity) });
+window.__setPhi = v => { RUN.phi = v; runUpdate(0); };
+window.__pistons = () => PARTS.filter(p => p.kin && p.kin.type === 'piston')
+  .map(p => ({ y:+p.group.position.y.toFixed(3), z:+p.group.position.z.toFixed(3) }));
+window.__rods = () => PARTS.filter(p => p.kin && p.kin.type === 'rod')
+  .map(p => ({ y:+p.group.position.y.toFixed(3), z:+p.group.position.z.toFixed(3) }));
 
 /* ============================================================
    开场：相机飞入 → 自动爆炸 → 打开标注
@@ -1039,8 +1161,8 @@ window.__diag = () => ({ xray:state.xray, nShellMats:shellMats.size,
 let intro = { start:performance.now(), dur:1900,
   fromP:camera.position.clone(), toP:V(8.8,4.5,10.2) };
 setT(0);
-setTimeout(() => animateTo(1, 3200), 1350);
-setTimeout(() => { if (!userTouched) toggleLabels(true); }, 5100);
+setTimeout(() => animateTo(1, 3200), 5600);              // 先运转展示 ~4s 再爆开
+setTimeout(() => { if (!userTouched) toggleLabels(true); }, 9400);
 let userTouched = false;
 slider.addEventListener('pointerdown', () => userTouched = true);
 playBtn.addEventListener('pointerdown', () => userTouched = true);
@@ -1053,6 +1175,7 @@ const clock = new THREE.Clock();
 function tick(){
   requestAnimationFrame(tick);
   const now = performance.now();
+  const dt = Math.min(clock.getDelta(), .05);
   if (intro){
     let k = (now - intro.start)/intro.dur;
     if (k >= 1){ camera.position.copy(intro.toP); intro = null; controls.enabled = true; }
@@ -1064,6 +1187,7 @@ function tick(){
     if (k >= 1){ setT(a.to); state.anim = null; }
     else setT(a.from + (a.to-a.from)*easeIO(k));
   }
+  runUpdate(dt);
   if (flash){
     const on = now < flash.until;
     const it = on ? .35 + .3*Math.sin(now*.02) : 0;
